@@ -29,7 +29,7 @@ def get_mask_from_lengths(lengths):
         mask (torch.tensor): num_sequences x max_length x 1 binary tensor
     """
     max_len = torch.max(lengths).item()
-    ids = torch.arange(0, max_len, out=torch.cuda.LongTensor(max_len))
+    ids = torch.arange(0, max_len, out=torch.LongTensor(max_len))
     mask = (ids < lengths.unsqueeze(1)).byte()
     return mask
 
@@ -43,6 +43,7 @@ class FlowtronLoss(torch.nn.Module):
         self.gate_loss = gate_loss
 
     def forward(self, model_output, gate_target, lengths):
+        print("Flowtron Loss...")
         z, log_s_list, gate_pred, mean, log_var, prob = model_output
 
         # create mask for outputs computed on padded data
@@ -344,16 +345,16 @@ class Encoder(nn.Module):
 
 
 class Attention(torch.nn.Module):
-    def __init__(self, n_mel_channels=80, n_speaker_dim=128,
+    def __init__(self, n_mel_channels=80, n_speaker_dim=128, n_emotion_dim=32,
                  n_text_channels=512, n_att_channels=128, temperature=1.0):
         super(Attention, self).__init__()
         self.temperature = temperature
         self.softmax = torch.nn.Softmax(dim=2)
         self.query = LinearNorm(n_mel_channels,
                                 n_att_channels, bias=False, w_init_gain='tanh')
-        self.key = LinearNorm(n_text_channels+n_speaker_dim,
+        self.key = LinearNorm(n_text_channels+n_speaker_dim+n_emotion_dim,
                               n_att_channels, bias=False, w_init_gain='tanh')
-        self.value = LinearNorm(n_text_channels+n_speaker_dim,
+        self.value = LinearNorm(n_text_channels+n_speaker_dim+n_emotion_dim,
                                 n_att_channels, bias=False,
                                 w_init_gain='tanh')
         self.v = LinearNorm(n_att_channels, 1, bias=False, w_init_gain='tanh')
@@ -382,12 +383,12 @@ class Attention(torch.nn.Module):
 
 
 class AR_Back_Step(torch.nn.Module):
-    def __init__(self, n_mel_channels, n_speaker_dim, n_text_dim,
+    def __init__(self, n_mel_channels, n_speaker_dim, n_emotion_dim, n_text_dim,
                  n_in_channels, n_hidden, n_attn_channels, n_lstm_layers,
                  add_gate):
         super(AR_Back_Step, self).__init__()
-        self.ar_step = AR_Step(n_mel_channels, n_speaker_dim, n_text_dim,
-                               n_mel_channels+n_speaker_dim, n_hidden,
+        self.ar_step = AR_Step(n_mel_channels, n_speaker_dim, n_emotion_dim, n_text_dim,
+                               n_mel_channels+n_speaker_dim+n_emotion_dim, n_hidden,
                                n_attn_channels, n_lstm_layers, add_gate)
 
     def forward(self, mel, text, mask, out_lens):
@@ -412,7 +413,7 @@ class AR_Back_Step(torch.nn.Module):
 
 
 class AR_Step(torch.nn.Module):
-    def __init__(self, n_mel_channels, n_speaker_dim, n_text_channels,
+    def __init__(self, n_mel_channels, n_speaker_dim, n_emotion_dim, n_text_channels,
                  n_in_channels, n_hidden, n_attn_channels, n_lstm_layers,
                  add_gate):
         super(AR_Step, self).__init__()
@@ -421,7 +422,7 @@ class AR_Step(torch.nn.Module):
         self.conv.bias.data = 0.0*self.conv.bias.data
         self.lstm = torch.nn.LSTM(n_hidden+n_attn_channels, n_hidden, n_lstm_layers)
         self.attention_lstm = torch.nn.LSTM(n_mel_channels, n_hidden)
-        self.attention_layer = Attention(n_hidden, n_speaker_dim,
+        self.attention_layer = Attention(n_hidden, n_speaker_dim, n_emotion_dim,
                                          n_text_channels, n_attn_channels,)
         self.dense_layer = DenseLayer(in_dim=n_hidden,
                                       sizes=[n_hidden, n_hidden])
@@ -535,7 +536,7 @@ class AR_Step(torch.nn.Module):
 
 
 class Flowtron(torch.nn.Module):
-    def __init__(self, n_speakers, n_speaker_dim, n_text, n_text_dim, n_flows,
+    def __init__(self, n_speakers, n_speaker_dim, n_emotions, n_emotion_dim, n_text, n_text_dim, n_flows,
                  n_mel_channels, n_hidden, n_attn_channels, n_lstm_layers,
                  use_gate_layer, mel_encoder_n_hidden, n_components,
                  fixed_gaussian, mean_scale, dummy_speaker_embedding):
@@ -543,6 +544,7 @@ class Flowtron(torch.nn.Module):
         super(Flowtron, self).__init__()
         norm_fn = nn.InstanceNorm1d
         self.speaker_embedding = torch.nn.Embedding(n_speakers, n_speaker_dim)
+        self.emotion_embedding = torch.nn.Embedding(n_emotions, n_emotion_dim)
         self.embedding = torch.nn.Embedding(n_text, n_text_dim)
         self.flows = torch.nn.ModuleList()
         self.encoder = Encoder(norm_fn=norm_fn, encoder_embedding_dim=n_text_dim)
@@ -558,21 +560,22 @@ class Flowtron(torch.nn.Module):
         for i in range(n_flows):
             add_gate = True if (i == (n_flows-1) and use_gate_layer) else False
             if i % 2 == 0:
-                self.flows.append(AR_Step(n_mel_channels, n_speaker_dim,
+                self.flows.append(AR_Step(n_mel_channels, n_speaker_dim, n_emotion_dim,
                                           n_text_dim,
-                                          n_mel_channels+n_speaker_dim,
+                                          n_mel_channels+n_speaker_dim+n_emotion_dim,
                                           n_hidden, n_attn_channels,
                                           n_lstm_layers, add_gate))
             else:
-                self.flows.append(AR_Back_Step(n_mel_channels, n_speaker_dim,
+                self.flows.append(AR_Back_Step(n_mel_channels, n_speaker_dim, n_emotion_dim,
                                                n_text_dim,
-                                               n_mel_channels+n_speaker_dim,
+                                               n_mel_channels+n_speaker_dim+n_emotion_dim,
                                                n_hidden, n_attn_channels,
                                                n_lstm_layers, add_gate))
 
-    def forward(self, mel, speaker_vecs, text, in_lens, out_lens):
+    def forward(self, mel, speaker_vecs, emotion_vecs, text, in_lens, out_lens):
         speaker_vecs = speaker_vecs*0 if self.dummy_speaker_embedding else speaker_vecs
         speaker_vecs = self.speaker_embedding(speaker_vecs)
+        emotion_vecs = self.emotion_embedding(emotion_vecs)
         text = self.embedding(text).transpose(1, 2)
         text = self.encoder(text, in_lens)
 
@@ -586,7 +589,7 @@ class Flowtron(torch.nn.Module):
         mel = mel.permute(2, 0, 1)
 
         encoder_outputs = torch.cat(
-            [text, speaker_vecs.expand(text.size(0), -1, -1)], 2)
+            [text, speaker_vecs.expand(text.size(0), -1, -1), emotion_vecs.expand(text.size(0), -1, -1)], 2)
         log_s_list = []
         attns_list = []
         mask = ~get_mask_from_lengths(in_lens)[..., None]
@@ -597,15 +600,16 @@ class Flowtron(torch.nn.Module):
             attns_list.append(attn)
         return mel, log_s_list, gate, attns_list,  mean, log_var, prob
 
-    def infer(self, residual, speaker_vecs, text, temperature=1.0,
+    def infer(self, residual, speaker_vecs, emotion_vecs, text, temperature=1.0,
               gate_threshold=0.5):
         speaker_vecs = speaker_vecs*0 if self.dummy_speaker_embedding else speaker_vecs
         speaker_vecs = self.speaker_embedding(speaker_vecs)
+        emotion_vecs = self.emotion_embedding(emotion_vecs)
         text = self.embedding(text).transpose(1, 2)
         text = self.encoder.infer(text)
         text = text.transpose(0, 1)
         encoder_outputs = torch.cat(
-            [text, speaker_vecs.expand(text.size(0), -1, -1)], 2)
+            [text, speaker_vecs.expand(text.size(0), -1, -1), emotion_vecs.expand(text.size(0), -1, -1)], 2)
         residual = residual.permute(2, 0, 1)
 
         attention_weights = []

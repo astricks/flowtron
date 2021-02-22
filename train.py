@@ -53,15 +53,16 @@ def update_params(config, params):
 
 
 def prepare_dataloaders(data_config, n_gpus, batch_size):
-    # Get data, data loaders and 1ollate function ready
+    # Get data, data loaders and collate function ready
     ignore_keys = ['training_files', 'validation_files']
     trainset = Data(data_config['training_files'],
                     **dict((k, v) for k, v in data_config.items()
                     if k not in ignore_keys))
 
     valset = Data(data_config['validation_files'],
-                  **dict((k, v) for k, v in data_config.items()
-                  if k not in ignore_keys), speaker_ids=trainset.speaker_ids)
+                **dict((k, v) for k, v in data_config.items()
+                if k not in ignore_keys), speaker_ids=trainset.speaker_ids,
+                emotion_ids=trainset.emotion_ids)
 
     collate_fn = DataCollate()
 
@@ -125,7 +126,7 @@ def load_checkpoint(checkpoint_path, model, optimizer, ignore_layers=[]):
 def save_checkpoint(model, optimizer, learning_rate, iteration, filepath):
     print("Saving model and optimizer state at iteration {} to {}".format(
           iteration, filepath))
-    model_for_saving = Flowtron(**model_config).cuda()
+    model_for_saving = Flowtron(**model_config)
     model_for_saving.load_state_dict(model.state_dict())
     torch.save({'model': model_for_saving,
                 'iteration': iteration,
@@ -144,11 +145,11 @@ def compute_validation_loss(model, criterion, valset, collate_fn, batch_size,
 
         val_loss = 0.0
         for i, batch in enumerate(val_loader):
-            mel, speaker_vecs, text, in_lens, out_lens, gate_target = batch
-            mel, speaker_vecs, text = mel.cuda(), speaker_vecs.cuda(), text.cuda()
-            in_lens, out_lens, gate_target = in_lens.cuda(), out_lens.cuda(), gate_target.cuda()
+            mel, speaker_vecs, emotion_vecs, text, in_lens, out_lens, gate_target = batch
+            mel, speaker_vecs, emotion_vecs, text = mel, speaker_vecs, emotion_vecs, text
+            in_lens, out_lens, gate_target = in_lens, out_lens, gate_target
             z, log_s_list, gate_pred, attn, mean, log_var, prob = model(
-                mel, speaker_vecs, text, in_lens, out_lens)
+                mel, speaker_vecs, emotion_vecs, text, in_lens, out_lens)
 
             loss = criterion((z, log_s_list, gate_pred, mean, log_var, prob),
                              gate_target, out_lens)
@@ -176,7 +177,7 @@ def train(n_gpus, rank, output_directory, epochs, learning_rate, weight_decay,
 
     criterion = FlowtronLoss(sigma, model_config['n_components'] > 1,
                              model_config['use_gate_layer'])
-    model = Flowtron(**model_config).cuda()
+    model = Flowtron(**model_config)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate,
                                  weight_decay=weight_decay)
 
@@ -216,13 +217,11 @@ def train(n_gpus, rank, output_directory, epochs, learning_rate, weight_decay,
         print("Epoch: {}".format(epoch))
         for batch in train_loader:
             model.zero_grad()
-
-            mel, speaker_vecs, text, in_lens, out_lens, gate_target = batch
-            mel, speaker_vecs, text = mel.cuda(), speaker_vecs.cuda(), text.cuda()
-            in_lens, out_lens, gate_target = in_lens.cuda(), out_lens.cuda(), gate_target.cuda()
-
+            mel, speaker_vecs, emotion_vecs, text, in_lens, out_lens, gate_target = batch
+            mel, speaker_vecs, emotion_vecs, text = mel, speaker_vecs, emotion_vecs, text
+            in_lens, out_lens, gate_target = in_lens, out_lens, gate_target
             z, log_s_list, gate_pred, attn, mean, log_var, prob = model(
-                mel, speaker_vecs, text, in_lens, out_lens)
+                mel, speaker_vecs, emotion_vecs, text, in_lens, out_lens)
             loss = criterion((z, log_s_list, gate_pred, mean, log_var, prob),
                              gate_target, out_lens)
 

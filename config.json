@@ -16,7 +16,7 @@
         "fp16_run": false
     },
     "data_config": {
-        "training_files": "filelists/ljs_audiopaths_text_sid_train_filelist.txt", 
+        "training_files": "filelists/ljs_audiopaths_text_sid_train_filelist.txt",
         "validation_files": "filelists/ljs_audiopaths_text_sid_val_filelist.txt",
         "text_cleaners": ["flowtron_cleaners"],
         "p_arpabet": 0.5,
@@ -33,10 +33,12 @@
         "dist_backend": "nccl",
         "dist_url": "tcp://localhost:54321"
     },
-    
+
     "model_config": {
         "n_speakers": 1,
         "n_speaker_dim": 128,
+        "n_emotions": 7,
+        "n_emotion_dim": 32,
         "n_text": 185,
         "n_text_dim": 512,
         "n_flows": 2,
@@ -50,5 +52,5 @@
         "fixed_gaussian": true,
         "dummy_speaker_embedding": false,
         "use_gate_layer": true
-    } 
+    }
 }

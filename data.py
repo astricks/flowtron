@@ -43,8 +43,8 @@ def load_wav_to_torch(full_path):
 class Data(torch.utils.data.Dataset):
     def __init__(self, filelist_path, filter_length, hop_length, win_length,
                  sampling_rate, mel_fmin, mel_fmax, max_wav_value, p_arpabet,
-                 cmudict_path, text_cleaners, speaker_ids=None, randomize=True,
-                 seed=1234):
+                 cmudict_path, text_cleaners, speaker_ids=None, emotion_ids=None,
+                 randomize=True, seed=1234):
         self.max_wav_value = max_wav_value
         self.audiopaths_and_text = load_filepaths_and_text(filelist_path)
         self.stft = TacotronSTFT(filter_length=filter_length,
@@ -60,7 +60,10 @@ class Data(torch.utils.data.Dataset):
             self.speaker_ids = self.create_speaker_lookup_table(self.audiopaths_and_text)
         else:
             self.speaker_ids = speaker_ids
-
+        if emotion_ids is None:
+            self.emotion_ids = self.create_emotion_lookup_table(self.audiopaths_and_text)
+        else:
+            self.emotion_ids = emotion_ids
         random.seed(seed)
         if randomize:
             random.shuffle(self.audiopaths_and_text)
@@ -69,6 +72,12 @@ class Data(torch.utils.data.Dataset):
         speaker_ids = np.sort(np.unique([x[2] for x in audiopaths_and_text]))
         d = {int(speaker_ids[i]): i for i in range(len(speaker_ids))}
         print("Number of speakers :", len(d))
+        return d
+
+    def create_emotion_lookup_table(self, audiopaths_and_text):
+        emotion_ids = np.sort(np.unique([x[3] for x in audiopaths_and_text]))
+        d = {int(emotion_ids[i]): i for i in range(len(emotion_ids))}
+        print("Number of emotions :", len(d))
         return d
 
     def get_mel(self, audio):
@@ -82,6 +91,9 @@ class Data(torch.utils.data.Dataset):
     def get_speaker_id(self, speaker_id):
         return torch.LongTensor([self.speaker_ids[int(speaker_id)]])
 
+    def get_emotion_id(self, emotion_id):
+        return torch.LongTensor([self.emotion_ids[int(emotion_id)]])
+
     def get_text(self, text):
         text = _clean_text(text, self.text_cleaners)
         words = re.findall(r'\S*\{.*?\}\S*|\S+', text)
@@ -93,7 +105,7 @@ class Data(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         # Read audio and text
-        audiopath, text, speaker_id = self.audiopaths_and_text[index]
+        audiopath, text, speaker_id, emotion_id = self.audiopaths_and_text[index]
         audio, sampling_rate = load_wav_to_torch(audiopath)
         if sampling_rate != self.sampling_rate:
             raise ValueError("{} SR doesn't match target {} SR".format(
@@ -102,7 +114,8 @@ class Data(torch.utils.data.Dataset):
         mel = self.get_mel(audio)
         text_encoded = self.get_text(text)
         speaker_id = self.get_speaker_id(speaker_id)
-        return (mel, speaker_id, text_encoded)
+        emotion_id = self.get_emotion_id(emotion_id)
+        return (mel, speaker_id, emotion_id, text_encoded)
 
     def __len__(self):
         return len(self.audiopaths_and_text)
@@ -141,14 +154,16 @@ class DataCollate():
         gate_padded.zero_()
         output_lengths = torch.LongTensor(len(batch))
         speaker_ids = torch.LongTensor(len(batch))
+        emotion_ids = torch.LongTensor(len(batch))
         for i in range(len(ids_sorted_decreasing)):
             mel = batch[ids_sorted_decreasing[i]][0]
             mel_padded[i, :, :mel.size(1)] = mel
             gate_padded[i, mel.size(1)-1:] = 1
             output_lengths[i] = mel.size(1)
             speaker_ids[i] = batch[ids_sorted_decreasing[i]][1]
+            emotion_ids[i] = batch[ids_sorted_decreasing[i]][2]
 
-        return mel_padded, speaker_ids, text_padded, input_lengths, output_lengths, gate_padded
+        return mel_padded, speaker_ids, emotion_ids, text_padded, input_lengths, output_lengths, gate_padded
 
 
 # ===================================================================
@@ -177,10 +192,11 @@ if __name__ == "__main__":
         os.chmod(args.output_dir, 0o775)
 
     filepaths_and_text = load_filepaths_and_text(args.filelist)
-    for (filepath, text, speaker_id) in filepaths_and_text:
+    for (filepath, text, speaker_id, emotion_id) in filepaths_and_text:
         print("speaker id", speaker_id)
         print("text", text)
         print("text encoded", mel2samp.get_text(text))
+        print("emotion id", emotion_id)
         audio, sr = load_wav_to_torch(filepath)
         melspectrogram = mel2samp.get_mel(audio)
         filename = os.path.basename(filepath)
