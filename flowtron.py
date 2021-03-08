@@ -542,7 +542,7 @@ class Flowtron(torch.nn.Module):
                  fixed_gaussian, mean_scale, dummy_speaker_embedding):
 
         super(Flowtron, self).__init__()
-        norm_fn = nn.InstanceNorm1d
+        norm_fn = nn.InstanceNorm1d(2)
         self.speaker_embedding = torch.nn.Embedding(n_speakers, n_speaker_dim)
         self.emotion_embedding = torch.nn.Embedding(n_emotions, n_emotion_dim)
         self.embedding = torch.nn.Embedding(n_text, n_text_dim)
