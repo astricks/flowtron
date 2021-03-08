@@ -11,7 +11,7 @@
         "checkpoint_path": "",
 	    "ignore_layers": [],
         "include_layers": ["encoder", "embedding"],
-        "warmstart_checkpoint_path": "../tacotron2/outdir/checkpoint_114000",
+        "warmstart_checkpoint_path": "",
 	    "with_tensorboard": true,
         "fp16_run": false
     },
