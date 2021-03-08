@@ -26,7 +26,9 @@ import torch.utils.data
 from scipy.io.wavfile import read
 from audio_processing import TacotronSTFT
 from text import text_to_sequence, cmudict, _clean_text, get_arpabet
+from google.colab import drive
 
+drive.mount('/content/drive')
 
 def load_filepaths_and_text(filename, split="|"):
     with open(filename, encoding='utf-8') as f:
